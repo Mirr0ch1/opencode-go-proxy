@@ -1,122 +1,130 @@
-# opencode-go-proxy
+<div align="center">
 
-A zero-dependency reverse proxy that lets any OpenAI-compatible client use the
-[OpenCode Go](https://opencode.ai/go) subscription through its public inference
-endpoint — with the session header and model-name rewriting that most clients
-can't do on their own.
+# 🔄 opencode-go-proxy
 
-## Why this exists
+**零依赖的 OpenCode Go 反向代理** —— 让任意 OpenAI 兼容客户端都能用上你的 OpenCode Go 订阅
 
-Since **2026-09-05**, the OpenCode Go API (`https://opencode.ai/inference/go/v1`)
-requires every request to carry an `x-opencode-session` header. Without it, the
-upstream rejects the request with `400 MissingSessionID`. This header serves two
-purposes: **session affinity** (same-session requests are pinned to the same
-backend) and **prompt-cache routing** (`usage.cached_tokens` > 0 keeps your bill
-down).
+[![License](https://img.shields.io/github/license/Mirr0ch1/opencode-go-proxy)](LICENSE)
+[![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)](#-特性)
+[![Node](https://img.shields.io/badge/node-%3E%3D18-green)](#快速开始)
 
-The problem: many clients that support custom OpenAI-compatible models
-(CodeBuddy's `models.json`, plain OpenAI SDKs, assorted harnesses) can set a
-`base_url` and an `api_key`, but **cannot inject a custom header**. There is no
-`CUSTOM_HEADERS` escape hatch for third-party model requests in most of them.
+[English](./README-en.md) · 中文
 
-This proxy sits in the middle and does the header injection (plus a few other
-things) so those clients "just work".
+</div>
 
-## Features
+---
 
-- **Zero dependencies** — a single Node.js script (`proxy.mjs`), no `npm install`.
-- **Injects `x-opencode-session`** with a 3-tier fallback (see below).
-- **Rewrites the `model` field** — lets you give clients a prefixed/suffixed model
-  alias (e.g. `deepseek-v4-pro-mine`) while the upstream sees the real name.
-- **Shared-token auth** — the real subscription key never leaves the proxy host;
-  clients only hold a cheap, rotatable token.
-- **Key isolation** — the proxy overwrites the client's `Authorization` header with
-  the real upstream key, so clients never need it.
-- **Streaming (SSE) pass-through** — responses are streamed transparently.
-- **Per-request logging** — status, latency, session id, model rewrite; error
-  responses also capture the upstream body and a compact request summary.
-- **systemd-friendly** — logs to stdout (journald), refuses to start without a token.
+## 目录
 
-## How it works
+- [它是什么](#-它是什么)
+- [为什么需要它](#-为什么需要它)
+- [特性](#-特性)
+- [架构](#-架构)
+- [会话 ID 的三级回退](#-会话-id-的三级回退)
+- [快速开始](#-快速开始)
+- [配置](#-配置)
+- [客户端接入](#-客户端接入)
+- [systemd 部署](#-systemd-部署)
+- [模型名改写](#-模型名改写)
+- [排障](#-排障)
+- [安全](#-安全)
+- [许可证](#-许可证)
 
+---
+
+## ✨ 它是什么
+
+一个**零依赖、单文件**的 Node.js 反向代理（`proxy.mjs`）。它把任意 OpenAI 兼容客户端转发到 [OpenCode Go](https://opencode.ai/go) 的公开推理端点，并自动补上大多数客户端做不到的两件事——**`x-opencode-session` 头注入**和**模型名改写**。
+
+## 🎯 为什么需要它
+
+自 **2026-09-05** 起，OpenCode Go API（`https://opencode.ai/inference/go/v1`）要求每个请求都携带 `x-opencode-session` 头，否则上游直接返回 `400 MissingSessionID`。这个头承担两个职责：
+
+- **会话亲和**：同一会话的请求被固定到同一后端；
+- **prompt 缓存路由**：`usage.cached_tokens` 命中时直接省订阅钱。
+
+问题在于：很多支持"自定义 OpenAI 兼容模型"的客户端（CodeBuddy 的 `models.json`、裸 OpenAI SDK、各种 harness）只能设 `base_url` 和 `api_key`，**无法注入自定义头**——大多数都没有 `CUSTOM_HEADERS` 这样的逃生口。
+
+这个代理就坐在中间，把这件事（以及几件配套的事）替客户端做了。
+
+## 🛠️ 特性
+
+- 🪶 **零依赖** —— 单文件 Node.js 脚本，无需 `npm install`
+- 🧠 **`x-opencode-session` 注入** —— 带三级回退（见下文）
+- 🔄 **模型名改写** —— 客户端可用别名（如 `deepseek-v4-pro-mine`），上游收到真实名字
+- 🔑 **共享 token 鉴权** —— 真实订阅 key 不出代理主机，客户端只拿可轮换的 token
+- 🔒 **密钥隔离** —— 代理用真实 key 覆盖客户端的 `Authorization` 头
+- 📡 **SSE 流式透传** —— 响应透明转发
+- 📝 **每请求日志** —— 状态码、耗时、会话 ID、模型改写；错误时附带上游 body 和请求摘要
+- 🖥️ **systemd 友好** —— 日志走 stdout（journald），缺 token 拒绝启动
+
+## 🏗️ 架构
+
+```mermaid
+flowchart LR
+    A["任意 OpenAI 兼容客户端<br/>CodeBuddy · SDK · 脚本"] -->|"HTTP · Bearer token"| P1
+    subgraph P["opencode-go-proxy（零依赖 Node.js）"]
+        direction TB
+        P1["① 校验共享 token"]
+        P2["② 注入 x-opencode-session"]
+        P3["③ 改写 model 名"]
+        P4["④ 覆盖 Authorization"]
+        P5["⑤ SSE 流式透传"]
+        P1 --> P2 --> P3 --> P4 --> P5
+    end
+    P5 -->|"HTTPS · Bearer 真实 key"| C["OpenCode Go<br/>inference/go/v1"]
 ```
-any OpenAI-compatible client
-        │  http://<proxy-host>:<port>/chat/completions
-        │  Authorization: Bearer <PROXY_TOKEN>
-        ▼
-┌───────────────────────────────┐
-│        opencode-go-proxy      │   zero-dep Node.js
-│                               │
-│  · verify shared token (401)  │
-│  · inject x-opencode-session  │
-│  · rewrite model name         │
-│  · overwrite Authorization    │
-│  · stream SSE response        │
-└───────────────────────────────┘
-        │  https://opencode.ai/inference/go/v1
-        │  Authorization: Bearer <OPENCODE_GO_API_KEY>
-        ▼
-   OpenCode Go inference endpoint
-```
 
-### Session-id fallback (3 tiers)
+## 🧠 会话 ID 的三级回退
 
-The `x-opencode-session` value is resolved in order of stability — the goal is a
-**stable** session id (for prompt-cache hits), not merely a value that passes the
-400 check:
+`x-opencode-session` 的值按"稳定性从高到低"回退——目标是得到一个**稳定**的会话 ID（从而命中 prompt 缓存），而不是仅仅通过 400 校验：
 
-1. **Client-provided id** — `X-Conversation-ID`, `X-Session-ID`, or an existing
-   `x-opencode-session` header.
-2. **Content hash** — `sha256(system message + first user message)`. For clients
-   that don't send a session id, this yields the *same* id across turns of the
-   same conversation (the system + first user message don't change), preserving
-   cache affinity.
-3. **Random UUID** — last resort; still passes the 400 check but loses caching.
+1. **客户端提供的 ID** —— `X-Conversation-ID` / `X-Session-ID`，或已有的 `x-opencode-session` 头
+2. **内容哈希** —— `sha256(system 消息 + 首条 user 消息)`。对不传会话 ID 的客户端，同一会话的多轮请求会得到**相同**的 ID（system + 首条 user 不会变），从而保住缓存亲和
+3. **随机 UUID** —— 兜底；能过 400 校验，但每轮都变、无缓存命中
 
-## Quick start
+## 🚀 快速开始
 
 ```bash
-# 1. Create an env file (see .env.example). For a systemd deployment, put it at
-#    ~/.config/opencode-go-proxy/opencode.env (see the systemd section below).
+# 1. 创建密钥文件（模板见 .env.example；systemd 部署请放到
+#    ~/.config/opencode-go-proxy/opencode.env，见下方 systemd 一节）
 cp .env.example opencode.env
-#    fill in OPENCODE_GO_API_KEY (required) and PROXY_TOKEN (required)
+#    填入 OPENCODE_GO_API_KEY（必填）和 PROXY_TOKEN（必填）
 
-# 2. Run
+# 2. 运行
 PROXY_TOKEN=... OPENCODE_GO_API_KEY=... node proxy.mjs
-# or with the env file via systemd EnvironmentFile
 
-# 3. Point any OpenAI-compatible client at it:
+# 3. 让任意 OpenAI 兼容客户端指向它：
 curl http://127.0.0.1:18999/chat/completions \
   -H "Authorization: Bearer $PROXY_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"model":"deepseek-v4.1-flash","messages":[{"role":"user","content":"hi"}],"max_tokens":64}'
 ```
 
-## Configuration
+## ⚙️ 配置
 
-All configuration is via environment variables.
+所有配置通过环境变量完成。
 
-| Variable | Required | Default | Description |
-|----------|:--------:|---------|-------------|
-| `OPENCODE_GO_API_KEY` | ✅ | — | Your real OpenCode Go subscription key. **Never shared with clients.** |
-| `PROXY_TOKEN` | ✅ | — | The token clients present as `Authorization: Bearer <PROXY_TOKEN>`. The proxy **refuses to start** without it. |
-| `PROXY_PORT` | — | `18999` | Listening port. |
-| `PROXY_BIND` | — | `0.0.0.0` | Bind address. Set `127.0.0.1` for local-only. |
+| 变量 | 必填 | 默认值 | 说明 |
+|------|:---:|--------|------|
+| `OPENCODE_GO_API_KEY` | ✅ | — | 你的真实 OpenCode Go 订阅 key。**绝不共享给客户端。** |
+| `PROXY_TOKEN` | ✅ | — | 客户端以 `Authorization: Bearer <PROXY_TOKEN>` 呈现的 token。**缺失时代理拒绝启动。** |
+| `PROXY_PORT` | — | `18999` | 监听端口 |
+| `PROXY_BIND` | — | `0.0.0.0` | 绑定地址；仅本机可用时设 `127.0.0.1` |
 
-## Client setup
+## 🔌 客户端接入
 
-Any OpenAI-compatible client works. Three things to configure:
+任意 OpenAI 兼容客户端都能接入，只需配三样：
 
-| Setting | Value |
-|---------|-------|
-| `base_url` | `http://<proxy-host>:<PROXY_PORT>` |
+| 配置项 | 值 |
+|--------|-----|
+| `base_url` | `http://<代理主机>:<PROXY_PORT>` |
 | `api_key` | `<PROXY_TOKEN>` |
-| `model` | real upstream name, or a `-opencode`-suffixed alias (suffix is stripped) |
+| `model` | 上游真实模型名，或带 `-opencode` 后缀的别名（后缀会被剥掉） |
 
-> The default suffix is `-opencode`. Set `custom-local:`-style prefixes or other
-> aliases by editing the `SUFFIX` constant in `proxy.mjs`.
+> 默认后缀是 `-opencode`。想改别名规则，编辑 `proxy.mjs` 里的 `SUFFIX` 常量即可。
 
-**OpenAI SDK example:**
+**OpenAI SDK 示例：**
 
 ```python
 from openai import OpenAI
@@ -128,15 +136,14 @@ client = OpenAI(
 
 resp = client.chat.completions.create(
     model="deepseek-v4-pro",
-    messages=[{"role": "user", "content": "Hello"}],
+    messages=[{"role": "user", "content": "你好"}],
 )
 print(resp.choices[0].message.content)
 ```
 
-### CodeBuddy (models.json)
+### CodeBuddy（models.json）
 
-If you use CodeBuddy, add custom models pointing at the proxy and use a suffixed
-id so you don't shadow the built-in models:
+如果你用 CodeBuddy，在 `models.json` 里添加指向代理的自定义模型，并用带后缀的 id 以免覆盖内置模型：
 
 ```json
 {
@@ -156,12 +163,11 @@ id so you don't shadow the built-in models:
 }
 ```
 
-Then switch with `/model deepseek-v4-pro-opencode`.
+然后用 `/model deepseek-v4-pro-opencode` 切换。
 
-## systemd (user service)
+## 🖥️ systemd 部署
 
-Secrets live in a private XDG config dir (`~/.config/opencode-go-proxy/opencode.env`),
-separate from the source checkout.
+密钥放在私有的 XDG 配置目录（`~/.config/opencode-go-proxy/opencode.env`），与源码检出目录分离。
 
 ```ini
 # ~/.config/systemd/user/opencode-go-proxy.service
@@ -179,10 +185,10 @@ Restart=always
 RestartSec=2
 TimeoutStopSec=10
 
-# Hardening (user-service-safe subset).
-# Omitted on purpose (they fail in a *user* service with status=218/CAPABILITIES):
-#   NoNewPrivileges, ProtectKernel{Tunables,Modules}, ProtectControlGroups.
-# Also omitted: MemoryDenyWriteExecute (Node's V8 JIT needs W^X memory).
+# Hardening（user 服务安全的子集）。
+# 有意省略（在 *user* 服务里会报 status=218/CAPABILITIES）：
+#   NoNewPrivileges、ProtectKernel{Tunables,Modules}、ProtectControlGroups。
+# 另省略：MemoryDenyWriteExecute（Node 的 V8 JIT 需要 W^X 内存）。
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
@@ -198,56 +204,45 @@ systemctl --user daemon-reload
 systemctl --user enable --now opencode-go-proxy
 ```
 
-> If the proxy needs to write files (it doesn't by default — logs go to journald),
-> add `ReadWritePaths=` for the specific directory under a strict `ProtectSystem=`.
+> 代理默认不写任何文件（日志走 journald）。若需要写文件，在 `ProtectSystem=strict` 下加 `ReadWritePaths=` 指向具体目录。
 
+## 🔄 模型名改写
 
-## Model-name rewriting
-
-The proxy strips `custom-local:` prefixes and a trailing `-opencode` suffix from
-the request body's `model` field before forwarding:
+代理转发前会剥掉请求体 `model` 字段的 `custom-local:` 前缀和 `-opencode` 后缀：
 
 ```
 custom-local:deepseek-v4.1-flash-opencode  →  deepseek-v4.1-flash
-deepseek-v4.1-flash                        →  deepseek-v4.1-flash  (pass-through)
+deepseek-v4.1-flash                        →  deepseek-v4.1-flash  （透传）
 ```
 
-This is what lets you use a suffixed alias in the client (to avoid shadowing a
-built-in model) while the upstream receives the real name.
+这让你能在客户端用带后缀的别名（避免覆盖内置模型），同时上游收到真实名字。
 
-## Troubleshooting
+## 🩺 排障
 
 ```bash
-# status
+# 状态
 systemctl --user status opencode-go-proxy
 
-# per-request logs (status, latency, session, model rewrite, error bodies)
+# 每请求日志（状态码、耗时、会话 ID、模型改写、错误 body）
 journalctl --user -u opencode-go-proxy -n 30
 
-# restart
+# 重启
 systemctl --user restart opencode-go-proxy
 ```
 
-| Error | Meaning |
-|-------|---------|
-| `400 MissingSessionID` | You hit the upstream directly, bypassing the proxy (which injects the header). |
-| `400 Model is unavailable` | ① suffixed model name without the proxy's rewrite; ② transient upstream outage (~1 min, self-recovers). |
-| `401 unauthorized` | Missing or wrong `PROXY_TOKEN`. |
+| 报错 | 含义 |
+|------|------|
+| `400 MissingSessionID` | 直连了上游、绕过了代理（代理会自动注入头） |
+| `400 Model is unavailable` | ① 带后缀的模型名没走代理改写；② 上游瞬时故障（约 1 分钟，自动恢复） |
+| `401 unauthorized` | `PROXY_TOKEN` 缺失或不正确 |
 
-## Security notes
+## 🔒 安全
 
-- The **real subscription key** lives only in the env file (chmod 600) on the
-  proxy host — e.g. `~/.config/opencode-go-proxy/opencode.env`. Clients hold only
-  the rotatable `PROXY_TOKEN`.
-- Rotating the token = edit `PROXY_TOKEN` in that env file + restart + update
-  clients. Rotating the real key = do it in the OpenCode console and update the
-  env file.
-- Client → proxy is **plain HTTP** (unencrypted) by default. If you expose the
-  proxy beyond your loopback, prefer an encrypted path (Tailscale/WireGuard) or
-  put TLS in front of it.
-- The proxy **refuses to start without `PROXY_TOKEN`** — fail-fast rather than
-  exposing your quota to the network with no auth.
+- **真实订阅 key 只存在代理主机的密钥文件里**（chmod 600，如 `~/.config/opencode-go-proxy/opencode.env`），客户端只持有可轮换的 `PROXY_TOKEN`。
+- **轮换 token** = 改密钥文件里的 `PROXY_TOKEN` + 重启 + 更新客户端；**轮换真实 key** = 去 OpenCode 控制台操作 + 更新密钥文件。
+- 客户端 → 代理段默认是**明文 HTTP**（未加密）。跨网络暴露时请走加密通道（Tailscale / WireGuard）或在前端加 TLS。
+- 代理**在缺少 `PROXY_TOKEN` 时拒绝启动**——宁可快速失败，也不把额度裸奔暴露到网络上。
 
-## License
+## 📄 许可证
 
-MIT — see [LICENSE](LICENSE).
+[MIT](./LICENSE)
