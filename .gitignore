@@ -1,0 +1,11 @@
+# secrets — never commit
+opencode.env
+.env
+*.env
+
+# logs
+*.log
+data/
+
+# OS
+.DS_Store
