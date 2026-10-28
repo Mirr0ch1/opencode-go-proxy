@@ -1,14 +1,39 @@
-# opencode-go-proxy
+<p align="center">
+  <img src="assets/readme/banner-en.png" alt="opencode-go-proxy — zero-dependency reverse proxy for OpenCode Go" width="100%">
+</p>
 
-[![License](https://img.shields.io/github/license/Mirr0ch1/opencode-go-proxy)](LICENSE)
-[![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)](#features)
+<p align="center">
+  <img src="https://img.shields.io/github/stars/Mirr0ch1/opencode-go-proxy?style=for-the-badge&logo=github&label=stars" alt="Stars">
+  <img src="https://img.shields.io/github/last-commit/Mirr0ch1/opencode-go-proxy?style=for-the-badge&logo=git&logoColor=white&label=last%20commit" alt="Last commit">
+  <img src="https://img.shields.io/badge/license-MIT-2ea44f?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="MIT license">
+  <img src="https://img.shields.io/badge/dependencies-0-2ea44f?style=for-the-badge" alt="Zero dependencies">
+</p>
 
-**Language:** [中文](./README.md) · English
+<p align="center">
+  <img src="https://img.shields.io/badge/Node-18%2B-339933?style=for-the-badge&logo=nodedotjs&logoColor=white" alt="Node 18+">
+  <img src="https://img.shields.io/badge/OpenAI-compatible-0A84FF?style=for-the-badge&logo=openai&logoColor=white" alt="OpenAI-compatible">
+  <img src="https://img.shields.io/badge/OpenCode-Go-000000?style=for-the-badge" alt="OpenCode Go">
+  <img src="https://img.shields.io/badge/session%20header-x--opencode--session-8A2BE2?style=for-the-badge" alt="Session header">
+</p>
 
-A zero-dependency reverse proxy that lets any OpenAI-compatible client use the
-[OpenCode Go](https://opencode.ai/go) subscription through its public inference
-endpoint — with the session header and model-name rewriting that most clients
-can't do on their own.
+<p align="center">
+  <img src="https://img.shields.io/badge/single%20file-proxy.mjs-6e7781?style=flat-square" alt="Single file">
+  <img src="https://img.shields.io/badge/build-none-2ea44f?style=flat-square" alt="No build step">
+  <img src="https://img.shields.io/badge/systemd-user%20service-8A2BE2?style=flat-square" alt="systemd user service">
+</p>
+
+<p align="center">
+  <a href="./README.md">中文</a> · <b>English</b>
+</p>
+
+<h1 align="center">opencode-go-proxy</h1>
+
+<p align="center">
+  <b>Zero-dependency reverse proxy for OpenCode Go</b><br>
+  <sub>Use your OpenCode Go subscription from any OpenAI-compatible client.</sub>
+</p>
+
+---
 
 ## Why this exists
 
